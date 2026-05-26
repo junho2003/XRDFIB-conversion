@@ -4,10 +4,16 @@ import tkinter as tk
 from tkinter import filedialog, messagebox, scrolledtext
 import os
 import glob
+import subprocess
+import sys
+import re
 
 """SEM is parallel to the Z axis"""
 """FIB is 52degrees tilted from Z axis towards -Y axis"""
 """SEM window right side is towards -X axis"""
+
+def script_path(filename):
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
 
 def unit_vector(vector):
     norm = np.linalg.norm(vector)
@@ -19,8 +25,13 @@ def proj_z(vector, z):
     z_norm = np.sqrt(np.sum(z**2))
     return (np.dot(vector, z) / z_norm**2) * z
 
+"""x,y,z rotation is counter-clockwise seen from positive x,y,z axes"""
 def x_rotation(vector, theta):
     R = np.array([[1,0,0],[0,np.cos(theta),-np.sin(theta)],[0,np.sin(theta),np.cos(theta)]])
+    return np.dot(R, vector)
+
+def y_rotation(vector, theta):
+    R = np.array([[np.cos(theta),0,np.sin(theta)],[0,1,0],[-np.sin(theta), 0, np.cos(theta)]])
     return np.dot(R, vector)
 
 def z_rotation(vector, theta):
@@ -28,6 +39,15 @@ def z_rotation(vector, theta):
     return np.dot(R, vector)
 
 def angle_between(v1, v2):
+    """ Returns the angle in radians between vectors 'v1' and 'v2' in clockwise direction::
+
+            >>> angle_between((1, 0, 0), (0, 1, 0))
+            1.5707963267948966
+            >>> angle_between((1, 0, 0), (1, 0, 0))
+            0.0
+            >>> angle_between((1, 0, 0), (-1, 0, 0))
+            3.141592653589793
+    """
     v1_u = unit_vector(v1)
     v2_u = unit_vector(v2)
     c = np.array([0,0,1])
@@ -45,18 +65,47 @@ def tiltstage(v1, v2):
     phi = np.degrees(np.arccos(np.clip(np.dot(v1_u, v2_u), -1.0, 1.0)))
     return round(phi, 2)
 
-def find_latest_redlog_file(xrd_folder):
-    log_folder = os.path.join(xrd_folder, "log")
+def find_latest_redlog_file(root_folder):
+
+    log_folder = os.path.join(root_folder, "log")
 
     if not os.path.isdir(log_folder):
-        raise FileNotFoundError(f"'log' folder not found in:\n{xrd_folder}")
+        raise FileNotFoundError(f"'log' folder not found in:\n{root_folder}")
 
     log_files = glob.glob(os.path.join(log_folder, "crysalispro_redLOG*.txt"))
 
     if not log_files:
-        raise FileNotFoundError(f"No crysalispro_redLOG*.txt file found in:\n{log_folder}")
+        raise FileNotFoundError(f"No crysalispro_redLOG*.txt found in:\n{log_folder}")
 
-    return max(log_files, key=os.path.getmtime)
+    month_map = {
+        "Jan":1,"Feb":2,"Mar":3,"Apr":4,"May":5,"Jun":6,
+        "Jul":7,"Aug":8,"Sep":9,"Oct":10,"Nov":11,"Dec":12
+    }
+
+    def extract_datetime(filepath):
+
+        name = os.path.basename(filepath)
+
+        m = re.search(
+            r"redLOG\w{3}-(\w{3})-(\d{2})-(\d{2})-(\d{2})-(\d{2})-(\d{4})",
+            name
+        )
+
+        if not m:
+            return (0,0,0,0,0)
+
+        month_str = m.group(1)
+        day = int(m.group(2))
+        hour = int(m.group(3))
+        minute = int(m.group(4))
+        second = int(m.group(5))
+        year = int(m.group(6))
+
+        month = month_map.get(month_str, 0)
+
+        return (year, month, day, hour, minute, second)
+
+    return max(log_files, key=extract_datetime)
 
 
 def read_ub_from_xrd_folder(xrd_folder):
@@ -163,40 +212,35 @@ def calculate_all(u, lamella, angle, reference, ub_file):
     beta1 = tiltstage(u_xyz, z)
 
     P0a_new = unit_vector(x_rotation(z_rotation(lamella_xyz, math.radians(360 - alpha1)), math.radians(360 - beta1)))
-    P0_BR = -round(angle_between(-x, P0a_new), 1)
+    P0_BR = round(angle_between(-x, P0a_new), 1)
 
     alpha2_A = angle_between(p1_xyz - proj_z(p1_xyz, z), -y)
     beta2_A = tiltstage(p1_xyz, z)
     perp2_A = tiltstage(y, unit_vector(x_rotation(z_rotation(p_xyz, math.radians(360 - alpha2_A)), math.radians(360 - beta2_A))))
     fibtilt2_A = round(52 - beta2_A, 1)
     P1a_new_A = unit_vector(x_rotation(z_rotation(-lamella_xyz, math.radians(360 - alpha2_A)), math.radians(beta2_A)))
-    P1_BR_A = -round(angle_between(-x, P1a_new_A), 1)
+    P1_BR_A = round(angle_between(-x, P1a_new_A), 1)
 
     alpha2_B = angle_between(p1_xyz - proj_z(p1_xyz, z), +y)
     beta2_B = tiltstage(p1_xyz, z)
     perp2_B = tiltstage(y, unit_vector(x_rotation(z_rotation(p_xyz, math.radians(360 - alpha2_B)), math.radians(360 + beta2_B))))
     fibtilt2_B = round(52 + beta2_B, 1)
     P1a_new_B = unit_vector(x_rotation(z_rotation(-lamella_xyz, math.radians(360 - alpha2_B)), math.radians(-beta2_B)))
-    P1_BR_B = -round(angle_between(-x, P1a_new_B), 1)
+    P1_BR_B = round(angle_between(-x, P1a_new_B), 1)
 
     alpha3_A = angle_between(p2_xyz - proj_z(p2_xyz, z), -y)
     beta3_A = tiltstage(p2_xyz, z)
     perp3_A = tiltstage(y, unit_vector(x_rotation(z_rotation(-p_xyz, math.radians(360 - alpha3_A)), math.radians(360 - beta3_A))))
     fibtilt3_A = round(52 - beta3_A, 1)
     P2a_new_A = unit_vector(x_rotation(z_rotation(lamella_xyz, math.radians(360 - alpha3_A)), math.radians(beta3_A)))
-    P2_BR_A = -round(angle_between(-x, P2a_new_A), 1)
+    P2_BR_A = round(angle_between(-x, P2a_new_A), 1)
 
     alpha3_B = angle_between(p2_xyz - proj_z(p2_xyz, z), +y)
     beta3_B = tiltstage(p2_xyz, z)
     perp3_B = tiltstage(y, unit_vector(x_rotation(z_rotation(-p_xyz, math.radians(360 - alpha3_B)), math.radians(360 + beta3_B))))
     fibtilt3_B = round(52 + beta3_B, 1)
     P2a_new_B = unit_vector(x_rotation(z_rotation(lamella_xyz, math.radians(360 - alpha3_B)), math.radians(-beta3_B)))
-    P2_BR_B = -round(angle_between(-x, P2a_new_B), 1)
-
-    alpha4 = angle_between(p3_xyz - proj_z(p3_xyz, z), -y)
-    beta4 = tiltstage(p3_xyz, z)
-    P3a_new = unit_vector(x_rotation(z_rotation(lamella_xyz, math.radians(360 - alpha4)), math.radians(360 - beta4)))
-    P3_BR = -round(angle_between(-x, P3a_new), 1)
+    P2_BR_B = round(angle_between(-x, P2a_new_B), 1)
 
     def two_col(title, A, B):
         return f"""
@@ -249,19 +293,22 @@ class App:
         self.root.title("FIB / XRD Angle Calculator")
 
         self.ub_file = tk.StringVar()
+        
+        tk.Label(root, text="XRD data(exp) folder").grid(row=0, column=0, sticky="w", padx=5, pady=5)
+        tk.Entry(root, textvariable=self.ub_file, width=45).grid(row=0, column=1, padx=5, pady=5)
+        tk.Button(root, text="Browse", command=self.browse_file).grid(row=0, column=2, padx=5, pady=5)
 
-        self.make_row("u (h,k,l)", "u", "0,0,-1", 0)
-        self.make_row("lamella (h,k,l)", "lamella", "0,1,0", 1)
-        self.make_row("polishing angle (deg.)", "angle", "1.5", 2)
-        self.make_row("reference (h,k,l)", "reference", "0,1,0", 3)
-
+        self.make_row("reference (h,k,l)", "reference", "0,1,0", 1)
+        self.make_row("u (h,k,l)", "u", "0,0,-1", 2)
+        self.make_row("lamella (h,k,l)", "lamella", "0,1,0", 3)
+        self.make_row("polishing angle (deg.)", "angle", "1.5", 4)
+        
         self.axis_photo = tk.PhotoImage(file="orientation.png")
         self.axis_label = tk.Label(self.root, image=self.axis_photo)
-        self.axis_label.grid(row=0, column=2, rowspan=4, padx=10, pady=5)
+        self.axis_label.grid(row=1, column=2, rowspan=4, padx=10, pady=5)
 
-        tk.Label(root, text="XRD data folder").grid(row=4, column=0, sticky="w", padx=5, pady=5)
-        tk.Entry(root, textvariable=self.ub_file, width=45).grid(row=4, column=1, padx=5, pady=5)
-        tk.Button(root, text="Browse", command=self.browse_file).grid(row=4, column=2, padx=5, pady=5)
+
+
 
         button_frame = tk.Frame(root)
         button_frame.grid(row=5, column=0, columnspan=3, sticky="ew", pady=10)
@@ -270,9 +317,14 @@ class App:
         button_frame.columnconfigure(1, weight=1)
         button_frame.columnconfigure(2, weight=1)
 
-        tk.Button(button_frame, text="Calculate", command=self.run_calc).grid(row=0, column=1)
         
-        tk.Button(button_frame, text="Show unit cell", command=self.show_unit_cell).grid(row=0, column=2, sticky="e", padx=10)
+
+        tk.Button(button_frame, text="Calculate angles", command=self.run_calc).grid(row=0, column=1)
+        
+        tk.Button(button_frame, text="Show unit cell", command=self.show_unit_cell).grid(row=0, column=0, sticky="e", padx=10)
+        
+        tk.Button(button_frame, text="Open crystal movie", command=self.open_crystal_movie).grid(row=0, column=2, sticky="w", padx=10)
+        
         self.output = scrolledtext.ScrolledText(root, width=90, height=25)
         self.unit_cell_text = None
         self.output.grid(row=6, column=0, columnspan=3, padx=5, pady=5)
@@ -318,6 +370,10 @@ class App:
         self.axis_photo = tk.PhotoImage(file=path)
     
         self.axis_label.config(image=self.axis_photo, text="")
+        
+    def open_crystal_movie(self):
+        movie_script = script_path("crystal movie_real.py")
+        subprocess.Popen([sys.executable, movie_script])
         
     def run_calc(self):
 
