@@ -329,16 +329,17 @@ class CrystalMovieViewer(QWidget):
             return img
         draw = ImageDraw.Draw(img)
         for x, y in self.measure_points:
-            draw.ellipse([x - 4, y - 4, x + 4, y + 4], fill="yellow")
+            draw.ellipse([x - 8, y - 8, x + 8, y + 8], fill="yellow")
         if len(self.measure_points) == 2:
             x1, y1 = self.measure_points[0]
             x2, y2 = self.measure_points[1]
-            draw.line([x1, y1, x2, y2], fill="yellow", width=1)
+            draw.line([x1, y1, x2, y2], fill="yellow", width=2)
             dx = x2 - x1
             dy = y2 - y1
             angle = math.degrees(math.atan2(-dy, dx))
+            font = ImageFont.load_default(size=30)
             text = f"Angle : {angle:.2f} deg"
-            draw.text((x2 + 10, y2 + 10), text, fill="yellow", size=40)
+            draw.text((x2 + 10, y2 + 10), text, fill="yellow", font=font)
         return img
 
     def preload_nearby_frames(self):
