@@ -18,8 +18,8 @@ class CrystalMovieViewer(QWidget):
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         
         # Zoom Boundaries
-        self.zoom_factor = 0.5
-        self.min_zoom = 0.5
+        self.zoom_factor = 1.0  # Set initial tracker to baseline
+        self.min_zoom = 0.8
         self.max_zoom = 5.0
 
         # State Initialization
@@ -36,6 +36,9 @@ class CrystalMovieViewer(QWidget):
         self.measure_points = []
         self.dragging_point = None
         self.measure_angle = None
+        
+        # Tracking mouse delta properties to distinguish clicks from drags
+        self.mouse_press_pos = None
 
         self.init_ui()
 
@@ -45,6 +48,10 @@ class CrystalMovieViewer(QWidget):
 
         self.status_label = QLabel("Load JPR movie", self)
         self.status_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        
+        # Critical for the .qss file configuration to find it
+        self.status_label.setObjectName("status_label") 
+        
         top_layout.addWidget(self.status_label)
         top_layout.addStretch()
 
@@ -53,7 +60,14 @@ class CrystalMovieViewer(QWidget):
         # Initialize the Graphics View Framework Pipeline
         self.scene = QGraphicsScene(self)
         self.view = QGraphicsView(self.scene, self)
-        self.view.setStyleSheet("background-color: black; border: none;")
+        
+        # Hide the physical scrollbars completely
+        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        
+        # Set default behavior to Hand Drag Panning
+        self.view.setDragMode(QGraphicsView.ScrollHandDrag)
+        
         self.view.setAlignment(Qt.AlignCenter)
         self.view.setRenderHint(QPainter.SmoothPixmapTransform)
         
@@ -83,6 +97,9 @@ class CrystalMovieViewer(QWidget):
         self.draw_current_frame()
         self.preload_nearby_frames()
 
+        # Steal keyboard/mouse focus instantly so drag panning works without a pre-click
+        self.view.setFocus(Qt.OtherFocusReason)
+
         self.status_label.setText(
             f"Movie: {self.movie_name} | Frames: {len(self.ops.frames)} | UB: {os.path.basename(self.ops.log_file)}"
         )
@@ -91,17 +108,22 @@ class CrystalMovieViewer(QWidget):
         self.zoom_factor = 1.0
         self.view.resetTransform()
 
+    def enterEvent(self, event):
+        """Automatically focuses the canvas when hover-entering to make panning instant."""
+        if self.ops.frames is not None:
+            self.view.setFocus(Qt.MouseFocusReason)
+        super().enterEvent(event)
+
     def eventFilter(self, source, event):
         if source == self.view.viewport() and self.ops.frames is not None:
             if event.type() == event.MouseButtonPress:
                 self.handle_mouse_press(event)
-                # Let the event propagate so QGraphicsView records the anchor point for panning
                 return False
 
             elif event.type() == event.MouseMove:
                 self.handle_mouse_move(event)
                 if self.dragging_point is not None:
-                    return True # Intercept event if we are manually dragging a yellow handle
+                    return True 
                 return False
 
             elif event.type() == event.MouseButtonRelease:
@@ -116,20 +138,17 @@ class CrystalMovieViewer(QWidget):
 
     def handle_mouse_press(self, event):
         if event.button() == Qt.LeftButton:
-            # 1. Store the exact viewport pixel where the click started
             self.mouse_press_pos = event.pos()
 
-            # 2. Check if the user clicked directly on top of an existing point to drag it
             scene_pos = self.view.mapToScene(event.pos())
             x, y = scene_pos.x(), scene_pos.y()
             for i, (px, py) in enumerate(self.measure_points):
-                if (x - px)**2 + (y - py)**2 < 14**2:  # Slighly larger hit-box for easier grabbing
-                    self.view.setDragMode(QGraphicsView.NoDrag)  # Turn off panning to allow precise dragging
+                if (x - px)**2 + (y - py)**2 < 14**2: 
+                    self.view.setDragMode(QGraphicsView.NoDrag)  # Lock panning for precise drag
                     self.dragging_point = i
                     return
 
     def handle_mouse_move(self, event):
-        # If we are actively adjusting a yellow point handle, recalculate overlay
         if self.dragging_point is not None:
             scene_pos = self.view.mapToScene(event.pos())
             self.measure_points[self.dragging_point] = (scene_pos.x(), scene_pos.y())
@@ -138,17 +157,15 @@ class CrystalMovieViewer(QWidget):
 
     def handle_mouse_release(self, event):
         if event.button() == Qt.LeftButton:
-            # If we were dragging a point, simply finish the action and turn panning back on
             if self.dragging_point is not None:
                 self.dragging_point = None
                 self.view.setDragMode(QGraphicsView.ScrollHandDrag)
                 return
 
-            # Calculate if the mouse actually moved significantly while pressed down
             if self.mouse_press_pos is not None:
                 travel_distance = (event.pos() - self.mouse_press_pos).manhattanLength()
 
-                # If the mouse moved less than 5 pixels, treat it as a stationary click!
+                # If it's a quick, stationary tap, generate a measurement node on release
                 if travel_distance < 5:
                     scene_pos = self.view.mapToScene(event.pos())
                     x, y = scene_pos.x(), scene_pos.y()
@@ -161,7 +178,6 @@ class CrystalMovieViewer(QWidget):
                     self.frame_cache.pop(self.idx, None)
                     self.draw_current_frame()
 
-            # Clean up positions and ensure hand panning is ready for the next interaction
             self.mouse_press_pos = None
             self.view.setDragMode(QGraphicsView.ScrollHandDrag)
 
@@ -170,7 +186,7 @@ class CrystalMovieViewer(QWidget):
 
     def handle_wheel(self, event):
         delta = event.angleDelta().y()
-
+        
         # System A: View Matrix Scaling (Ctrl held down)
         if event.modifiers() == Qt.ControlModifier:
             zoom_step = 1.15
@@ -179,7 +195,6 @@ class CrystalMovieViewer(QWidget):
             else:
                 new_zoom = self.zoom_factor / zoom_step
 
-            # Only scale if within boundaries
             if self.min_zoom <= new_zoom <= self.max_zoom:
                 self.zoom_factor = new_zoom
                 if delta > 0:
@@ -193,16 +208,17 @@ class CrystalMovieViewer(QWidget):
                 self.next_frame(jump=True)
             else:
                 self.prev_frame(jump=True)
+            return
 
+        # System B: Native Progression Frame switching
+        if self.wheel_busy:
+            return
+        self.wheel_busy = True
+        
         if delta < 0:
             self.next_frame()
         else:
             self.prev_frame()
-
-        # System B: Native Frame Progression (No Modifiers)
-        if self.wheel_busy:
-            return
-        self.wheel_busy = True
 
         QTimer.singleShot(30, self.release_wheel)
 
@@ -210,13 +226,14 @@ class CrystalMovieViewer(QWidget):
         self.wheel_busy = False
 
     def resizeEvent(self, event):
-        # Overridden resize mechanics automatically handled by view constraints
         super().resizeEvent(event)
-        # Look into the active scene to grab whatever image is currently displayed
-        items = self.scene.items()
-        if items:
-            # Fit the image item cleanly within the new view rectangle matrices
-            self.view.fitInView(items[0], Qt.KeepAspectRatio)
+        
+        # FIX: Only run fitInView if the user hasn't actively applied a manual custom zoom.
+        # This keeps top label updates from resetting your current zoom/pan state!
+        if getattr(self, 'zoom_factor', 1.0) == 1.0:
+            items = self.scene.items()
+            if items:
+                self.view.fitInView(items[0], Qt.KeepAspectRatio)
 
     def pil_to_pixmap(self, img):
         im = img.convert("RGBA")
@@ -243,16 +260,10 @@ class CrystalMovieViewer(QWidget):
             img_path = self.image_dict[frame_number]
             img = Image.open(img_path)
 
-            # Draw axes overlay
             img = self.ops.draw_axes_on_image(img, self.ops.UB_matrix, angles)
 
-            # Fall back to 1100x800 if the layout hasn't rendered on screen yet
-            view_w = self.view.width() if self.view.width() > 100 else 1200
-            view_h = self.view.height() if self.view.height() > 100 else 800
-
-            img.thumbnail((view_w, view_h))
-            # Scale to base dimensions
-            #img.thumbnail((1100, 800))
+            # Keep a reliable coordinate space size so frame transitions don't alter the scene bounding box
+            img.thumbnail((1200, 800))
             img = self.draw_measurement_overlay(img)
 
             pixmap = self.pil_to_pixmap(img)
@@ -262,10 +273,21 @@ class CrystalMovieViewer(QWidget):
                 oldest_key = sorted(self.frame_cache.keys())[0]
                 del self.frame_cache[oldest_key]
 
-        # Update the Scene without touching current transformation scales
+        # Save current transformation matrices (Your exact Zoom level + Pan location)
+        old_transform = self.view.transform()
+
         self.scene.clear()
-        self.scene.addPixmap(pixmap)
+        pixmap_item = self.scene.addPixmap(pixmap)
         self.scene.setSceneRect(QRectF(pixmap.rect()))
+
+        # If loading a brand new movie file, force it to fit perfectly inside the application frame bounds
+        if getattr(self, 'is_initial_load', False):
+            self.view.fitInView(pixmap_item, Qt.KeepAspectRatio)
+            self.is_initial_load = False
+            self.zoom_factor = 1.0
+        else:
+            # Forcefully re-apply the zoom/pan perspective coordinates to the fresh image frame swap
+            self.view.setTransform(old_transform)
 
         img_path = self.image_dict[frame_number]
         self.status_label.setText(
@@ -316,7 +338,7 @@ class CrystalMovieViewer(QWidget):
             dy = y2 - y1
             angle = math.degrees(math.atan2(-dy, dx))
             text = f"Angle : {angle:.2f} deg"
-            draw.text((x2 + 10, y2 + 10), text, fill="yellow")
+            draw.text((x2 + 10, y2 + 10), text, fill="yellow", size=40)
         return img
 
     def preload_nearby_frames(self):

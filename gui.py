@@ -67,7 +67,7 @@ class Gui(QWidget):
 
         self.ub_file = QLineEdit()
 
-        browse_btn = QPushButton("Browse")
+        browse_btn = QPushButton("Load movie")
         browse_btn.clicked.connect(self.browse_file)
         #browse_btn.clicked.connect(self.movie_widget.open_jpr_file)
 
@@ -203,7 +203,11 @@ class Gui(QWidget):
                                                  )
         if self._file_name != '':
             self._curr_folder = os.path.dirname(self._file_name)
-            self._exp_folder = os.path.dirname(self._curr_folder)
+            exp_folder = os.path.dirname(self._curr_folder)
+            if self._exp_folder is None:
+                self._exp_folder = exp_folder
+            if exp_folder != self._exp_folder:
+                self.ops.result_text = ''
             self.ub_file.setText(self._exp_folder)
         try:
            #self.ops.read_ub_from_xrd_folder(path)
@@ -217,6 +221,7 @@ class Gui(QWidget):
 
         self.show_btn.setEnabled(True)
         self.calc_btn.setEnabled(True)
+
 
     def change_ref(self):
         if self.sel_btn.currentIndex() == 0:
