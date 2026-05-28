@@ -79,7 +79,7 @@ class Gui(QWidget):
         
         left_widget = QWidget()
         layout = QGridLayout()
-        left_widget.setLayout(layout,stretch=1)
+        left_widget.setLayout(layout)
 
         splitter.addWidget(left_widget)
         splitter.addWidget(self.movie_widget)
