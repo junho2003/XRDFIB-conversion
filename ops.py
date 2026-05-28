@@ -321,7 +321,11 @@ class Operations():
         y = np.array([0.0, 1.0, 0.0])
         z = np.array([0.0, 0.0, 1.0])
         
-        reference_xyz = self.UB_matrix @ reference
+        if isinstance(reference, float):
+            ref_output = f"Rotate stage relatively by: {round(reference,1)}"
+        else:
+            reference_xyz = self.UB_matrix @ reference
+            ref_output = f"Rotate stage relatively by: {round(self.angle_between(-x, reference_xyz - self.proj_z(reference_xyz, z)),1)}"
         u_xyz = self.unit_vector(self.UB_matrix @ u)
         lamella_xyz = self.unit_vector(self.UB_matrix @ lamella)
         p_xyz = self.unit_vector(np.cross(u_xyz, lamella_xyz))
@@ -386,8 +390,10 @@ class Operations():
         self.result_text = f"""
     ========== Follow these instructions ==========
 
-    1. Align your reference vector towards right horizontal direction of SEM
-    2. Rotate stage relatively by: {round(self.angle_between(-x, reference_xyz - self.proj_z(reference_xyz, z)),1)}
+    1. Align your reference vector towards right horizontal direction of SEM 
+    """
+        self.result_text += '2. ' + ref_output
+        self.result_text += f"""
     3. Save current position as starting position
 
     ====================

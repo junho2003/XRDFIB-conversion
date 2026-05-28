@@ -21,7 +21,8 @@ from PyQt5.QtWidgets import (
     QHBoxLayout,
     QVBoxLayout,
     QSplitter,
-    QSizePolicy
+    QSizePolicy,
+    QComboBox
 )
 
 from PyQt5.QtGui import QPixmap,QImage
@@ -44,6 +45,7 @@ class Gui(QWidget):
         self._file_name = None
         self._exp_folder = None
         self._curr_folder = None
+        self.phi_ref = 0
 
         self.setWindowTitle(
             "FIB / XRD Angle Calculator"
@@ -91,32 +93,45 @@ class Gui(QWidget):
         self.setLayout(main_layout)
 
         # Input rows
-        self.reference = self.make_row(
-            layout,
-            "reference (h,k,l)",
-            "0,1,0",
-            1
-        )
+        line = QHBoxLayout()
+        self.sel_btn = QComboBox()
+        self.sel_btn.addItems(['hkl', "Fiducial (Phi)"])
+        self.sel_btn.currentIndexChanged.connect(self.change_ref)
+
+        self.reference = QLineEdit('0,0,1')
+        self.reference.setFixedWidth(50)
+        line.addWidget(QLabel('Select reference'))
+        line.addWidget(self.sel_btn)
+        line.addWidget(self.reference)
+        layout.addLayout(line, 0, 0)
+        
+
+        #self.reference = self.make_row(
+        #    layout,
+        #    "reference (h,k,l)",
+        #    "0,1,0",
+        #    1
+        #)
 
         self.u = self.make_row(
             layout,
             "u (h,k,l)",
             "0,0,-1",
-            2
+            1
         )
 
         self.lamella = self.make_row(
             layout,
             "lamella (h,k,l)",
             "0,1,0",
-            3
+            2
         )
 
         self.polish_angle = self.make_row(
             layout,
             "polishing angle (deg.)",
             "1.5",
-            4
+            3
         )
 
         # Image
@@ -203,6 +218,12 @@ class Gui(QWidget):
         self.show_btn.setEnabled(True)
         self.calc_btn.setEnabled(True)
 
+    def change_ref(self):
+        if self.sel_btn.currentIndex() == 0:
+            self.reference.setText('0,0,1')
+        else:
+            self.reference.setText(str(self.phi_ref))
+
     def parse_vector(self, text):
         return np.array([
             float(x.strip())
@@ -226,7 +247,10 @@ class Gui(QWidget):
 
     def run_calc(self):
         try:
-            reference = self.parse_vector(self.reference.text())
+            if self.sel_btn.currentIndex() == 0:
+                reference = self.parse_vector(self.reference.text())
+            else:
+                reference = float(self.reference.text())  
             u = self.parse_vector(self.u.text())
             lamella = self.parse_vector(self.lamella.text())
             angle = float(self.polish_angle.text())
